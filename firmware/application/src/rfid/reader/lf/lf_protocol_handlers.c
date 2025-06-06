@@ -606,3 +606,73 @@ bool lf_validate_em410x_parity(uint32_t data, uint8_t parity) {
     return lf_calculate_em410x_parity(data) == parity;
 }
 
+// ============================================================================
+// HID Utility Functions
+// ============================================================================
+
+static uint8_t parity_even(uint32_t value, uint8_t bits) {
+    uint8_t p = 0;
+    for (uint8_t i = 0; i < bits; i++) {
+        p ^= (value >> i) & 1;
+    }
+    return p & 1;
+}
+
+static uint8_t parity_odd(uint32_t value, uint8_t bits) {
+    uint8_t p = 1; // odd parity starts at 1
+    for (uint8_t i = 0; i < bits; i++) {
+        p ^= (value >> i) & 1;
+    }
+    return p & 1;
+}
+
+uint16_t lf_calculate_hid_checksum(uint32_t id_hi, uint32_t id_lo) {
+    uint32_t frame = (id_hi << 16) | (id_lo & 0xFFFF);
+    uint32_t data = (frame >> 1) & 0xFFFFFF; // 24 data bits
+
+    uint8_t even = parity_even(data >> 12, 12);   // bits 24..13
+    uint8_t odd  = parity_odd(data & 0xFFF, 12);  // bits 12..1
+
+    return ((even << 1) | odd);
+}
+
+bool lf_validate_hid_checksum(uint32_t id_hi, uint32_t id_lo, uint16_t checksum) {
+    return lf_calculate_hid_checksum(id_hi, id_lo) == (checksum & 0x3);
+}
+
+int lf_convert_facility_card_to_hid(uint32_t facility, uint32_t card, uint32_t *id_hi, uint32_t *id_lo) {
+    if (!id_hi || !id_lo || facility > 0xFF || card > 0xFFFF) {
+        return LF_PROTOCOL_ERROR_INVALID_PARAM;
+    }
+
+    uint32_t data = ((facility & 0xFF) << 16) | (card & 0xFFFF);
+    uint8_t even = parity_even(data >> 12, 12);
+    uint8_t odd  = parity_odd(data & 0xFFF, 12);
+    uint32_t frame = (even << 25) | (data << 1) | odd;
+
+    *id_hi = frame >> 16;
+    *id_lo = frame & 0xFFFF;
+    return LF_PROTOCOL_SUCCESS;
+}
+
+int lf_convert_hid_to_facility_card(uint32_t id_hi, uint32_t id_lo, uint32_t *facility, uint32_t *card) {
+    if (!facility || !card) {
+        return LF_PROTOCOL_ERROR_INVALID_PARAM;
+    }
+
+    uint32_t frame = (id_hi << 16) | (id_lo & 0xFFFF);
+    uint8_t even = (frame >> 25) & 1;
+    uint8_t odd  = frame & 1;
+    uint32_t data = (frame >> 1) & 0xFFFFFF;
+
+    uint8_t even_calc = parity_even(data >> 12, 12);
+    uint8_t odd_calc  = parity_odd(data & 0xFFF, 12);
+    if (even != even_calc || odd != odd_calc) {
+        return LF_PROTOCOL_ERROR_CHECKSUM;
+    }
+
+    *facility = (data >> 16) & 0xFF;
+    *card = data & 0xFFFF;
+    return LF_PROTOCOL_SUCCESS;
+}
+

@@ -565,13 +565,37 @@ int lf_field_set_power(uint8_t power_level) {
     if (!m_lf_abstraction_initialized) {
         return LF_ERROR_NOT_INITIALIZED;
     }
-    
+
     // Update current configuration
     m_current_signal_config.power_level = power_level;
-    
-    // TODO: Implement actual power control through PWM duty cycle adjustment
-    // This would require modifying the PWM sequence values based on power_level
-    
+
+#if defined(PROJECT_CHAMELEON_ULTRA)
+    if (power_level > 255) {
+        power_level = 255;
+    }
+
+    /* Map 0-255 range to PWM compare value (0-4).
+     * The LF carrier uses a PWM with TOP value 4 to generate 125kHz.
+     * Changing the compare value effectively adjusts the duty cycle
+     * and therefore the output power on the antenna driver. */
+    uint16_t duty = ((uint32_t)power_level * 4) / 255;
+    if (duty > 4) {
+        duty = 4;
+    }
+
+    extern nrf_pwm_values_individual_t m_lf_125khz_pwm_seq_val[];
+    m_lf_125khz_pwm_seq_val[0].channel_0 = duty;
+
+    /* If the carrier is running, restart playback so the new duty
+     * cycle takes effect. */
+    if (!nrf_drv_pwm_is_stopped(&m_pwm)) {
+        nrf_drv_pwm_stop(&m_pwm, true);
+        start_lf_125khz_radio();
+    }
+#elif defined(PROJECT_CHAMELEON_LITE)
+    /* Lite hardware does not support power adjustment */
+#endif
+
     return LF_SUCCESS;
 }
 
